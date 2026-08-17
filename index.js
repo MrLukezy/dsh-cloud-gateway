@@ -156,11 +156,24 @@ function writeProxyHead(socket, res) {
   socket.write("\r\n");
 }
 
-function proxyHeaders(req) {
+function proxyHeaders(req, target) {
   const headers = { ...req.headers, "accept-encoding": "identity" };
   delete headers.connection;
   delete headers["keep-alive"];
   delete headers["proxy-connection"];
+  // Official dsh pins settings.describe and other privileged RPCs to loopback
+  // even when --trusted-host is set. After our login wall, present as the
+  // local Harness so the configuration plane can load.
+  headers.host = target.host;
+  if (headers.origin) headers.origin = `${target.protocol}//${target.host}`;
+  if (headers.referer) {
+    try {
+      const referer = new URL(headers.referer);
+      headers.referer = `${target.protocol}//${target.host}${referer.pathname}${referer.search}`;
+    } catch {
+      delete headers.referer;
+    }
+  }
   return headers;
 }
 
@@ -282,7 +295,7 @@ function startGateway(options) {
       port: target.port || 80,
       method: req.method,
       path: req.url,
-      headers: proxyHeaders(req),
+      headers: proxyHeaders(req, target),
     }, (proxyRes) => {
       const contentType = String(proxyRes.headers["content-type"] || "");
       if (!contentType.includes("text/html")) {
@@ -337,7 +350,7 @@ function startGateway(options) {
       port: target.port || 80,
       method: "GET",
       path: req.url,
-      headers: req.headers,
+      headers: proxyHeaders(req, target),
     });
     proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
       writeProxyHead(socket, proxyRes);

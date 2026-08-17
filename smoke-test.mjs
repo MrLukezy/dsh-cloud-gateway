@@ -5,7 +5,15 @@ import { apply } from "./index.js";
 
 process.env.DSH_HOME = path.join(os.tmpdir(), "dsh-cloud-gateway-smoke");
 
+const seen = { host: "", origin: "" };
 const upstream = http.createServer((req, res) => {
+  if (req.url.startsWith("/api/")) {
+    seen.host = String(req.headers.host || "");
+    seen.origin = String(req.headers.origin || "");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{\"ok\":true}");
+    return;
+  }
   res.writeHead(200, { "content-type": "text/html" });
   res.end("<html><head></head><body>ok</body></html>");
 });
@@ -54,6 +62,16 @@ const saved = await fetch("http://127.0.0.1:18080/dsh/settings", {
 });
 const savedHtml = await saved.text();
 await new Promise((resolve) => setTimeout(resolve, 300));
+const api = await fetch("http://127.0.0.1:18080/api/settings.describe", {
+  method: "POST",
+  headers: {
+    cookie,
+    "content-type": "application/json",
+    host: "example.test",
+    origin: "http://example.test",
+  },
+  body: "{}",
+});
 
 console.log({
   login: login.status,
@@ -70,6 +88,9 @@ console.log({
   settingsForm: settingsHtml.includes("name=\"listenPort\""),
   saved: saved.status,
   savedOk: savedHtml.includes("已保存"),
+  api: api.status,
+  upstreamHost: seen.host,
+  upstreamOrigin: seen.origin,
 });
 
 for (const stop of effects) stop?.();

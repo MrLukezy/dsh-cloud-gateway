@@ -25,7 +25,7 @@ dsh plugin --profile web add dsh-cloud-gateway
 
 ## 启动
 
-必须声明外网 Host，否则登录后模型接口和 WebSocket 会被官方围栏拦截：
+必须声明外网 Host，否则登录后普通模型接口和 WebSocket 会被官方围栏拦截。设置页里的「模型 / 提供方目录」走的是官方特权接口 `settings.describe`，只认本机回环；本插件在登录后会把这类请求改成本机 Host，所以云端也能打开。
 
 ```bash
 dsh web --trusted-host YOUR_PUBLIC_IP --trusted-host your.example.com
