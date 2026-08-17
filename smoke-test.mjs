@@ -44,16 +44,32 @@ const app = await fetch("http://127.0.0.1:18080/dsh/", {
   redirect: "manual",
 });
 const appHtml = await app.text();
+const settingsDenied = await fetch("http://127.0.0.1:18080/dsh/settings", { redirect: "manual" });
+const settings = await fetch("http://127.0.0.1:18080/dsh/settings", { headers: { cookie } });
+const settingsHtml = await settings.text();
+const saved = await fetch("http://127.0.0.1:18080/dsh/settings", {
+  method: "POST",
+  headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+  body: "username=tester&password=&listenHost=127.0.0.1&listenPort=18080&basePath=/dsh&cookiePath=/",
+});
+const savedHtml = await saved.text();
+await new Promise((resolve) => setTimeout(resolve, 300));
 
 console.log({
   login: login.status,
   head: head.status,
   hasForm: html.includes("name=\"username\""),
+  hasGuide: html.includes("安装后如何配置这些参数"),
   denied: denied.status,
   authed: authed.status,
   hasCookie: cookie.includes("dsh_gw="),
   app: app.status,
-  injected: appHtml.includes("dsh-gw-logout"),
+  injected: appHtml.includes("dsh-gw-logout") && appHtml.includes("dsh-gw-settings"),
+  settingsDenied: settingsDenied.status,
+  settings: settings.status,
+  settingsForm: settingsHtml.includes("name=\"listenPort\""),
+  saved: saved.status,
+  savedOk: savedHtml.includes("已保存"),
 });
 
 for (const stop of effects) stop?.();

@@ -39,6 +39,17 @@ http://YOUR_PUBLIC_IP:8080/dsh
 
 默认公网端口是 **8080**，避免和官方 `dsh web` 的 `3080` 冲突。两个端口相同会拒绝启动。
 
+## 安装后怎么配置
+
+官方「设置 → 插件」目前不会列出第三方插件的字段，所以本插件自己提供可视化配置页。
+
+1. 启动后打开 `http://YOUR_PUBLIC_IP:8080/dsh`。
+2. 如果还没自己设密码，到 `dsh web` 日志里找 `generated login`，或看 `$DSH_HOME/cloud-gateway-state.json`。
+3. 登录后点右下角 **网关设置**，可以直接改账号、密码、端口、路径、是否信任 Nginx。
+4. 登录页下方也有「安装后如何配置这些参数」说明。
+
+环境变量 `DSH_CLOUD_USERNAME` / `DSH_CLOUD_PASSWORD` 优先级最高，适合 systemd。被环境变量锁住的字段，设置页里会显示为不可改。
+
 ## 账号密码
 
 发布包里的 `cordis.patch.yml` **不带密码**。解析顺序：

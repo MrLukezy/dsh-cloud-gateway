@@ -4,6 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
 import Schema from "@deepseek-ai/schemastery";
+import { loginPage, settingsPage, toolbarHtml } from "./pages.js";
 
 export const name = "dsh-cloud-gateway";
 export const inject = ["webStartup"];
@@ -17,28 +18,18 @@ const STATE_FILE = "cloud-gateway-state.json";
 const UUID_POLYFILL = `<script>(function(){try{var c=globalThis.crypto;if(!c||typeof c.randomUUID==="function")return;if(typeof c.getRandomValues!=="function")return;c.randomUUID=function(){var b=new Uint8Array(16);c.getRandomValues(b);b[6]=b[6]&15|64;b[8]=b[8]&63|128;var h=[];for(var j=0;j<16;j++)h.push((b[j]>>4).toString(16)+(b[j]&15).toString(16));return h[0]+h[1]+h[2]+h[3]+"-"+h[4]+h[5]+"-"+h[6]+h[7]+"-"+h[8]+h[9]+"-"+h[10]+h[11]+h[12]+h[13]+h[14]+h[15]};}catch(e){}})();</script>`;
 
 export const Config = Schema.object({
-  listenHost: Schema.string().default("0.0.0.0").description("Public bind address"),
-  listenPort: Schema.number().min(1).max(65535).default(8080).description("Public port; keep this different from dsh web"),
-  basePath: Schema.string().default("/dsh").description("Public path prefix"),
-  username: Schema.string().default("admin").description("Login username"),
-  password: Schema.string().description("Login password. Leave empty to generate and persist one"),
-  secret: Schema.string().description("Session HMAC secret. Leave empty to persist a generated secret"),
-  upstreamHost: Schema.string().description("Local Harness host; defaults to webStartup.host"),
-  upstreamPort: Schema.number().min(1).max(65535).description("Local Harness port; defaults to webStartup.port"),
-  trustProxy: Schema.boolean().default(false).description("Trust X-Forwarded-For / X-Forwarded-Proto only behind a known reverse proxy"),
-  secureCookie: Schema.boolean().description("Force Secure cookies. Leave empty to enable only when the request is HTTPS"),
-  cookiePath: Schema.string().default("/").description("Cookie path. Use / if /assets /plugins /api stay at the site root"),
+  listenHost: Schema.string().default("0.0.0.0").description("公网监听地址。云服务器用 0.0.0.0，本机调试可用 127.0.0.1"),
+  listenPort: Schema.number().min(1).max(65535).default(8080).description("公网端口，必须和 dsh web 不同。默认 8080，避免和官方 3080 冲突"),
+  basePath: Schema.string().default("/dsh").description("浏览器访问前缀，例如 /dsh"),
+  username: Schema.string().default("admin").description("登录账号。也可用环境变量 DSH_CLOUD_USERNAME"),
+  password: Schema.string().role("secret").description("登录密码。留空则首次启动生成并写入本机 state 文件；也可用 DSH_CLOUD_PASSWORD"),
+  secret: Schema.string().role("secret").description("会话 HMAC 密钥。留空则持久化生成"),
+  upstreamHost: Schema.string().description("本机 Harness 地址，默认 webStartup.host"),
+  upstreamPort: Schema.number().min(1).max(65535).description("本机 Harness 端口，默认 webStartup.port"),
+  trustProxy: Schema.boolean().default(false).description("仅在前面有 Nginx/Caddy 时打开，才会信任 X-Forwarded-*"),
+  secureCookie: Schema.boolean().description("强制 Secure Cookie。留空则仅 HTTPS 请求带 Secure"),
+  cookiePath: Schema.string().default("/").description("Cookie 路径。站点根路径还有 /assets /plugins /api 时保持 /"),
 });
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[char]));
-}
 
 function normalizeBasePath(value) {
   let basePath = String(value || "/dsh").trim();
@@ -110,47 +101,6 @@ function guessPublicUrls(port, basePath) {
     }
   }
   return urls;
-}
-
-function loginPage(basePath, error) {
-  const action = escapeHtml(`${basePath}/login`);
-  const message = error ? `<p class="error">${escapeHtml(error)}</p>` : "";
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>登录 · DeepSeek Harness</title>
-  <style>
-    :root { --bg:#0b1020; --line:#2a3354; --text:#eef2ff; --muted:#93a0c4; --accent:#5b8cff; --danger:#ff7b8a; }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
-    body { font-family: "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color: var(--text); background: var(--bg); display: grid; place-items: center; padding: 24px; }
-    .shell { width: min(420px, 100%); }
-    h1 { margin: 0; font-size: 22px; }
-    .sub { margin: 4px 0 18px; color: var(--muted); font-size: 13px; }
-    .card { background: #141a2e; border: 1px solid var(--line); border-radius: 18px; padding: 28px 24px; }
-    label { display: block; margin: 14px 0 8px; color: var(--muted); font-size: 13px; }
-    input { width: 100%; height: 44px; border: 1px solid var(--line); border-radius: 12px; background: #0e1426; color: var(--text); padding: 0 14px; }
-    button { width: 100%; height: 46px; margin-top: 22px; border: 0; border-radius: 12px; background: var(--accent); color: white; font-size: 15px; font-weight: 600; }
-    .error { color: var(--danger); font-size: 13px; }
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <h1>DeepSeek Harness</h1>
-    <p class="sub">云端入口，登录后进入工作台</p>
-    <form class="card" method="post" action="${action}">
-      ${message}
-      <label for="username">账号</label>
-      <input id="username" name="username" autocomplete="username" required autofocus>
-      <label for="password">密码</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit">登录</button>
-    </form>
-  </div>
-</body>
-</html>`;
 }
 
 function clientIp(req, trustProxy) {
@@ -226,9 +176,13 @@ function startGateway(options) {
     trustProxy,
     secureCookie,
     cookiePath,
+    settingsValues,
+    envLocked,
+    onSaveSettings,
   } = options;
   const loginPath = `${basePath}/login`;
   const logoutPath = `${basePath}/logout`;
+  const settingsPath = `${basePath}/settings`;
   const appPath = `${basePath}/`;
   const loginAttempts = new Map();
   const target = new URL(upstream);
@@ -314,8 +268,7 @@ function startGateway(options) {
       body = body.replace("<head>", `<head>${UUID_POLYFILL}`);
     }
     if (!body.includes('id="dsh-gw-logout"')) {
-      const safeLogout = escapeHtml(logoutPath);
-      const bar = `<style>#dsh-gw-logout{position:fixed;right:16px;bottom:24px;z-index:2147483647;display:inline-flex;align-items:center;height:40px;padding:0 14px;border-radius:999px;background:#1f2937;color:#fff;font:600 14px/1 sans-serif;text-decoration:none}</style><a id="dsh-gw-logout" href="${safeLogout}">退出登录</a>`;
+      const bar = toolbarHtml(settingsPath, logoutPath);
       body = body.includes("</body>") ? body.replace("</body>", `${bar}</body>`) : body + bar;
     }
     return body;
@@ -407,6 +360,20 @@ function startGateway(options) {
     res.end(loginPage(basePath, error));
   }
 
+  function sendSettings(res, extra = {}) {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    res.end(settingsPage({
+      basePath,
+      values: settingsValues,
+      upstream,
+      publicUrls: guessPublicUrls(listenPort, basePath),
+      envLocked,
+      saved: false,
+      error: "",
+      ...extra,
+    }));
+  }
+
   const server = http.createServer(async (req, res) => {
     const pathname = requestUrl(req).pathname || "/";
 
@@ -441,6 +408,58 @@ function startGateway(options) {
         return;
       }
       sendLogin(res);
+      return;
+    }
+
+    if (pathname === settingsPath && (req.method === "GET" || req.method === "HEAD")) {
+      if (!sessionUser(req)) {
+        res.writeHead(302, { location: loginPath });
+        res.end();
+        return;
+      }
+      if (req.method === "HEAD") {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+        res.end();
+        return;
+      }
+      sendSettings(res, { saved: requestUrl(req).searchParams.get("saved") === "1" });
+      return;
+    }
+
+    if (pathname === settingsPath && req.method === "POST") {
+      if (!sessionUser(req)) {
+        res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
+        res.end("未登录");
+        return;
+      }
+      let params;
+      try {
+        params = new URLSearchParams(await parseBody(req));
+      } catch {
+        sendSettings(res, { error: "请求过大" });
+        return;
+      }
+      let saved;
+      try {
+        saved = await onSaveSettings({
+          username: (params.get("username") || "").trim(),
+          password: params.get("password") || "",
+          listenHost: (params.get("listenHost") || "").trim(),
+          listenPort: Number(params.get("listenPort")),
+          basePath: params.get("basePath") || "/dsh",
+          trustProxy: params.get("trustProxy") === "1",
+          secureCookie: params.get("secureCookie") === "true" ? true : params.get("secureCookie") === "false" ? false : undefined,
+          cookiePath: params.get("cookiePath") || "/",
+        });
+      } catch (error) {
+        sendSettings(res, { error: error.message || "保存失败" });
+        return;
+      }
+      sendSettings(res, {
+        saved: true,
+        values: saved.values,
+        publicUrls: guessPublicUrls(saved.values.listenPort, saved.values.basePath),
+      });
       return;
     }
 
@@ -503,15 +522,27 @@ function startGateway(options) {
     server.listen(listenPort, listenHost, () => {
       const urls = guessPublicUrls(listenPort, basePath);
       console.log(`[dsh-cloud-gateway] login wall on http://${listenHost}:${listenPort}${basePath} -> ${upstream}`);
+      console.log(`[dsh-cloud-gateway] after login, open ${basePath}/settings to configure username, password, port, and proxy options`);
       for (const url of urls) console.log(`[dsh-cloud-gateway] try ${url}`);
       resolve(server);
     });
   });
 }
 
+function mergeRuntimeConfig(config = {}) {
+  const visual = readState().userSettings || {};
+  return {
+    ...config,
+    ...visual,
+    username: process.env.DSH_CLOUD_USERNAME || visual.username || config.username,
+    password: process.env.DSH_CLOUD_PASSWORD || visual.password || config.password,
+    secret: process.env.DSH_CLOUD_SECRET || config.secret,
+  };
+}
+
 function resolveCredentials(config) {
-  const username = String(process.env.DSH_CLOUD_USERNAME || config.username || "admin").trim() || "admin";
-  const configured = process.env.DSH_CLOUD_PASSWORD || config.password || "";
+  const username = String(config.username || "admin").trim() || "admin";
+  const configured = config.password || "";
   const state = readState();
   let password = configured;
   let generated = false;
@@ -527,7 +558,7 @@ function resolveCredentials(config) {
     console.warn("[dsh-cloud-gateway] configured password is shorter than 8 characters");
   }
 
-  const secret = process.env.DSH_CLOUD_SECRET || config.secret || state.secret || crypto.randomBytes(32).toString("hex");
+  const secret = config.secret || state.secret || crypto.randomBytes(32).toString("hex");
   const nextState = {
     ...state,
     secret,
@@ -539,6 +570,7 @@ function resolveCredentials(config) {
   if (generated) {
     console.log(`[dsh-cloud-gateway] generated login ${username} / ${password}`);
     console.log(`[dsh-cloud-gateway] credentials stored in ${statePath()}`);
+    console.log("[dsh-cloud-gateway] after login, open 网关设置 to change this password");
   } else if (!configured) {
     console.log(`[dsh-cloud-gateway] using generated credentials from ${statePath()}`);
   }
@@ -546,49 +578,137 @@ function resolveCredentials(config) {
   return { username, password, secret };
 }
 
-export function apply(ctx, config = {}) {
-  const listenHost = config.listenHost || "0.0.0.0";
-  const listenPort = Number(config.listenPort || 8080);
-  const basePath = normalizeBasePath(config.basePath || "/dsh");
-  const upstreamHost = config.upstreamHost || ctx.webStartup?.host || "127.0.0.1";
-  const upstreamPort = Number(config.upstreamPort || ctx.webStartup?.port || 3080);
-  const trustProxy = Boolean(config.trustProxy);
-  const cookiePath = config.cookiePath || "/";
-
+function buildGatewayOptions(ctx, config, handlers) {
+  const merged = mergeRuntimeConfig(config);
+  const listenHost = merged.listenHost || "0.0.0.0";
+  const listenPort = Number(merged.listenPort || 8080);
+  const basePath = normalizeBasePath(merged.basePath || "/dsh");
+  const upstreamHost = merged.upstreamHost || ctx.webStartup?.host || "127.0.0.1";
+  const upstreamPort = Number(merged.upstreamPort || ctx.webStartup?.port || 3080);
+  const cookiePath = merged.cookiePath || "/";
   if (listenPort === upstreamPort) {
     throw new Error(`listenPort ${listenPort} conflicts with the local dsh web port. Use 8080 for the gateway, or move dsh web to another port.`);
   }
-
-  const { username, password, secret } = resolveCredentials(config);
-  const passwordHash = hashPassword(password);
-  const upstream = `http://${upstreamHost}:${upstreamPort}`;
-
-  ctx.effect(() => {
-    let server;
-    let closed = false;
-    startGateway({
+  const { username, password, secret } = resolveCredentials(merged);
+  return {
+    listenHost,
+    listenPort,
+    basePath,
+    username,
+    passwordHash: hashPassword(password),
+    secret,
+    upstream: `http://${upstreamHost}:${upstreamPort}`,
+    trustProxy: Boolean(merged.trustProxy),
+    secureCookie: merged.secureCookie,
+    cookiePath,
+    settingsValues: {
+      username,
       listenHost,
       listenPort,
       basePath,
-      username,
-      passwordHash,
-      secret,
-      upstream,
-      trustProxy,
-      secureCookie: config.secureCookie,
+      trustProxy: Boolean(merged.trustProxy),
+      secureCookie: merged.secureCookie,
       cookiePath,
-    }).then((started) => {
-      if (closed) {
-        started.close();
-        return;
-      }
-      server = started;
-    }).catch((error) => {
-      console.error("[dsh-cloud-gateway] failed to listen", error);
-    });
+    },
+    envLocked: {
+      username: Boolean(process.env.DSH_CLOUD_USERNAME),
+      password: Boolean(process.env.DSH_CLOUD_PASSWORD),
+    },
+    ...handlers,
+  };
+}
+
+function persistVisualSettings(patch, upstreamPort) {
+  if (!patch.username) throw new Error("账号不能为空");
+  if (!patch.listenHost) throw new Error("监听地址不能为空");
+  const listenPort = Number(patch.listenPort);
+  if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+    throw new Error("公网端口无效");
+  }
+  if (listenPort === Number(upstreamPort)) {
+    throw new Error(`公网端口不能和本机 dsh web 端口 ${upstreamPort} 相同`);
+  }
+  const basePath = normalizeBasePath(patch.basePath || "/dsh");
+  if (patch.password && patch.password.length < 8) {
+    console.warn("[dsh-cloud-gateway] configured password is shorter than 8 characters");
+  }
+
+  const state = readState();
+  const userSettings = { ...(state.userSettings || {}) };
+  if (!process.env.DSH_CLOUD_USERNAME) userSettings.username = patch.username;
+  if (!process.env.DSH_CLOUD_PASSWORD && patch.password) {
+    userSettings.password = patch.password;
+    delete state.generatedPassword;
+  }
+  userSettings.listenHost = patch.listenHost;
+  userSettings.listenPort = listenPort;
+  userSettings.basePath = basePath;
+  userSettings.trustProxy = Boolean(patch.trustProxy);
+  userSettings.cookiePath = patch.cookiePath || "/";
+  if (patch.secureCookie === true || patch.secureCookie === false) {
+    userSettings.secureCookie = patch.secureCookie;
+  } else {
+    delete userSettings.secureCookie;
+  }
+
+  writeState({
+    ...state,
+    username: userSettings.username || state.username,
+    userSettings,
+    ...(patch.password ? { generatedPassword: undefined } : {}),
+  });
+
+  return {
+    username: userSettings.username || patch.username,
+    listenHost: userSettings.listenHost,
+    listenPort,
+    basePath,
+    trustProxy: userSettings.trustProxy,
+    secureCookie: userSettings.secureCookie,
+    cookiePath: userSettings.cookiePath,
+  };
+}
+
+export function apply(ctx, config = {}) {
+  const runtime = {
+    closed: false,
+    server: null,
+    restartTimer: null,
+  };
+
+  const restart = () => {
+    if (runtime.closed) return;
+    const current = runtime.server;
+    runtime.server = null;
+    const boot = () => {
+      startGateway(buildGatewayOptions(ctx, config, {
+        onSaveSettings: async (patch) => {
+          const upstreamPort = Number(config.upstreamPort || ctx.webStartup?.port || 3080);
+          const values = persistVisualSettings(patch, upstreamPort);
+          clearTimeout(runtime.restartTimer);
+          runtime.restartTimer = setTimeout(restart, 150);
+          return { values };
+        },
+      })).then((started) => {
+        if (runtime.closed) {
+          started.close();
+          return;
+        }
+        runtime.server = started;
+      }).catch((error) => {
+        console.error("[dsh-cloud-gateway] failed to listen", error);
+      });
+    };
+    if (current) current.close(() => boot());
+    else boot();
+  };
+
+  ctx.effect(() => {
+    restart();
     return () => {
-      closed = true;
-      server?.close();
+      runtime.closed = true;
+      clearTimeout(runtime.restartTimer);
+      runtime.server?.close();
     };
   });
 }
