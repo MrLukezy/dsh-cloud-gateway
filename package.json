@@ -1,0 +1,42 @@
+{
+  "name": "dsh-cloud-gateway",
+  "version": "0.2.0",
+  "description": "Login wall and public gateway for DeepSeek Harness cloud deploys.",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "dsh-category-security",
+    "deepseek-harness"
+  ],
+  "scripts": {
+    "test": "node smoke-test.mjs"
+  },
+  "author": "MrLukezy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrLukezy/dsh-cloud-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MrLukezy/dsh-cloud-gateway/issues"
+  },
+  "homepage": "https://github.com/MrLukezy/dsh-cloud-gateway#readme",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
