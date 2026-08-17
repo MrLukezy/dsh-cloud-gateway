@@ -174,6 +174,11 @@ function proxyHeaders(req, target) {
       delete headers.referer;
     }
   }
+  // The fence also rejects sec-fetch-site: cross-site even on loopback.
+  delete headers["sec-fetch-site"];
+  delete headers["sec-fetch-mode"];
+  delete headers["sec-fetch-dest"];
+  delete headers["sec-fetch-user"];
   return headers;
 }
 
@@ -339,6 +344,7 @@ function startGateway(options) {
         res.destroy();
       }
     });
+    proxyReq.setHeader("host", target.host);
     req.pipe(proxyReq);
   }
 
@@ -365,6 +371,7 @@ function startGateway(options) {
     });
     proxyReq.on("error", () => socket.destroy());
     socket.on("error", () => proxyReq.destroy());
+    proxyReq.setHeader("host", target.host);
     proxyReq.end();
   }
 

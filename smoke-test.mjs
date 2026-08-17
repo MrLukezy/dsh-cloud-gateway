@@ -5,11 +5,12 @@ import { apply } from "./index.js";
 
 process.env.DSH_HOME = path.join(os.tmpdir(), "dsh-cloud-gateway-smoke");
 
-const seen = { host: "", origin: "" };
+const seen = { host: "", origin: "", site: "" };
 const upstream = http.createServer((req, res) => {
   if (req.url.startsWith("/api/")) {
     seen.host = String(req.headers.host || "");
     seen.origin = String(req.headers.origin || "");
+    seen.site = String(req.headers["sec-fetch-site"] || "");
     res.writeHead(200, { "content-type": "application/json" });
     res.end("{\"ok\":true}");
     return;
@@ -69,6 +70,7 @@ const api = await fetch("http://127.0.0.1:18080/api/settings.describe", {
     "content-type": "application/json",
     host: "example.test",
     origin: "http://example.test",
+    "sec-fetch-site": "cross-site",
   },
   body: "{}",
 });
@@ -91,6 +93,7 @@ console.log({
   api: api.status,
   upstreamHost: seen.host,
   upstreamOrigin: seen.origin,
+  strippedSite: seen.site === "",
 });
 
 for (const stop of effects) stop?.();
