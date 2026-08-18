@@ -46,10 +46,15 @@ window.__ModuleLoader__.load({
         }),
       });
       const result = await res.json();
-      if (!res.ok || !result || !result.path) {
+      if (!res.ok || !result || !result.path || !result.token) {
         throw new Error((result && result.error) || `HTTP ${res.status}`);
       }
-      return result.path;
+      return result;
+    }
+
+    function mentionBlock(files) {
+      const tokens = files.map((file) => `@${file.token}`).join(" ");
+      return `请阅读 ${tokens}`;
     }
 
     const plugin = {
@@ -76,10 +81,11 @@ window.__ModuleLoader__.load({
             const actions = latestActions;
             const draft = latestDraft;
             clearOfficialDropOverlay();
-            Promise.all(docs.map((file) => uploadFile(file))).then((paths) => {
-              if (!actions || !paths.length) return;
+            Promise.all(docs.map((file) => uploadFile(file))).then((files) => {
+              if (!actions || !files.length) return;
               const prefix = draft && String(draft).trim() ? `${draft}\n` : "";
-              actions.setDraft(`${prefix}请阅读这些文件：\n${paths.join("\n")}`);
+              actions.setDraft(`${prefix}${mentionBlock(files)}`);
+              window.dispatchEvent(new CustomEvent("dsh-uploads-changed"));
             }).catch((error) => {
               console.error("[dsh-cloud-gateway] document drop failed", error);
             });

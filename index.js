@@ -137,6 +137,55 @@ function safeUploadName(name) {
   return cleaned || "file";
 }
 
+function manifestPath(dir) {
+  return path.join(dir, "manifest.json");
+}
+
+function readUploadManifest(dir) {
+  try {
+    const data = JSON.parse(fs.readFileSync(manifestPath(dir), "utf8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeUploadManifest(dir, data) {
+  fs.writeFileSync(manifestPath(dir), JSON.stringify(data, null, 2));
+}
+
+function fileToken(name) {
+  const base = safeUploadName(name);
+  const ascii = base.replace(/[^A-Za-z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (ascii && /^[\w-]+$/.test(ascii)) return ascii.slice(0, 60);
+  const hash = crypto.createHash("sha1").update(String(name || "file")).digest("hex").slice(0, 8);
+  const prefix = ascii ? ascii.slice(0, 24) : "file";
+  return `${prefix}-${hash}`.replace(/-+/g, "-").slice(0, 60);
+}
+
+function uniqueUploadToken(dir, name, manifest) {
+  const stem = fileToken(name);
+  let token = stem;
+  let n = 1;
+  while (manifest[token] || fs.existsSync(path.join(dir, token))) {
+    n += 1;
+    token = `${stem}-${n}`;
+  }
+  return token;
+}
+
+function saveUploadFile(dir, name, bytes) {
+  fs.mkdirSync(dir, { recursive: true });
+  const manifest = readUploadManifest(dir);
+  const token = uniqueUploadToken(dir, name, manifest);
+  const abs = path.resolve(dir, token);
+  if (!abs.startsWith(`${path.resolve(dir)}${path.sep}`)) throw new Error("非法文件名");
+  fs.writeFileSync(abs, bytes);
+  manifest[token] = { name, path: abs, token, ts: Date.now() };
+  writeUploadManifest(dir, manifest);
+  return { path: abs, name, token };
+}
+
 export function registerUploadRoute(ctx) {
   const dir = uploadDir();
   ctx.webServer.register({
@@ -177,12 +226,9 @@ export function registerUploadRoute(ctx) {
           if (!base64) throw new Error("缺少文件数据");
           const bytes = Buffer.from(base64, "base64");
           if (!bytes.length) throw new Error("文件为空");
-          fs.mkdirSync(dir, { recursive: true });
-          const abs = path.resolve(dir, `${Date.now()}-${name}`);
-          if (!abs.startsWith(`${path.resolve(dir)}${path.sep}`)) throw new Error("非法文件名");
-          fs.writeFileSync(abs, bytes);
+          const saved = saveUploadFile(dir, name, bytes);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ path: abs, name }));
+          res.end(JSON.stringify(saved));
         } catch (error) {
           res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));

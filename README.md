@@ -49,7 +49,7 @@ dsh web --trusted-host YOUR_PUBLIC_IP --trusted-host your.example.com
 2. 登录后打开 **设置 → 网关**，再点 **网关设置**，改账号、密码、端口和是否信任反代。也可以在同一页退出登录。
 3. 启动命令必须带 `--trusted-host`，否则登录后接口会被官方围栏拦住。
 4. 前面如果有 Nginx，打开「信任反向代理」，并把 `/dsh`、`/assets/`、`/plugins/`、`/api`、`/dsh-image-gen` 都反代到网关。
-5. 浏览器拖入 PDF、Markdown 等非图片文件时，网关会保存到服务器并写入输入框路径；png/jpeg/webp/gif 仍走官方图片附件栏。
+5. 浏览器拖入 PDF、Markdown 等非图片文件时，网关会保存到服务器，并在输入框插入 `@文件名` 引用；png/jpeg/webp/gif 仍走官方图片附件栏。
 
 ## 文档
 
