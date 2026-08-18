@@ -2,7 +2,9 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { apply } from "./index.js";
+import fs from "node:fs";
+import { EventEmitter } from "node:events";
+import { apply, registerUploadRoute } from "./index.js";
 
 process.env.DSH_HOME = path.join(os.tmpdir(), "dsh-cloud-gateway-smoke");
 
@@ -30,6 +32,7 @@ await new Promise((resolve) => upstream.listen(18081, "127.0.0.1", resolve));
 const effects = [];
 const ctx = {
   webStartup: { host: "127.0.0.1", port: 18081 },
+  inject: () => {},
   effect: (fn) => {
     effects.push(fn());
   },
@@ -108,6 +111,40 @@ const api = await fetch("http://127.0.0.1:18080/api/settings.describe", {
   body: "{}",
 });
 
+let uploadRoute;
+registerUploadRoute({
+  webServer: {
+    register: (route) => {
+      uploadRoute = route;
+    },
+  },
+});
+const upload = await new Promise((resolve, reject) => {
+  const req = new EventEmitter();
+  req.method = "POST";
+  const res = {
+    statusCode: 0,
+    body: "",
+    writeHead(code) {
+      this.statusCode = code;
+    },
+    end(chunk = "") {
+      this.body += String(chunk);
+      try {
+        resolve({ status: this.statusCode, ...JSON.parse(this.body || "{}") });
+      } catch (error) {
+        reject(error);
+      }
+    },
+  };
+  uploadRoute.handler(req, res);
+  req.emit("data", Buffer.from(JSON.stringify({
+    name: "note.md",
+    base64: Buffer.from("# hello\n", "utf8").toString("base64"),
+  })));
+  req.emit("end");
+});
+
 console.log({
   login: login.status,
   head: head.status,
@@ -132,6 +169,8 @@ console.log({
   upstreamHost: seen.host,
   upstreamOrigin: seen.origin,
   strippedSite: seen.site === "",
+  uploadOk: upload.status === 200,
+  uploadPath: Boolean(upload.path) && fs.existsSync(upload.path),
 });
 
 for (const stop of effects) stop?.();

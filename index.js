@@ -125,6 +125,74 @@ function requestUrl(req) {
   }
 }
 
+const UPLOAD_BODY_LIMIT = 20 * 1024 * 1024;
+
+function uploadDir() {
+  return path.join(dshHome(), "uploads");
+}
+
+function safeUploadName(name) {
+  const base = String(name || "file").split(/[/\\]/).pop() || "file";
+  const cleaned = base.replace(/[\u0000-\u001f<>:"|?*]/g, "_").replace(/^\.+/g, "_").slice(0, 120);
+  return cleaned || "file";
+}
+
+export function registerUploadRoute(ctx) {
+  const dir = uploadDir();
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/api/dsh-gw-upload",
+    handler: (req, res) => {
+      if (req.method !== "POST") {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      const chunks = [];
+      let size = 0;
+      let overflow = false;
+      req.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > UPLOAD_BODY_LIMIT) overflow = true;
+        else chunks.push(chunk);
+      });
+      req.on("error", () => {
+        if (!res.headersSent) {
+          res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "读取请求体失败" }));
+        }
+      });
+      req.on("end", () => {
+        if (overflow) {
+          if (!res.headersSent) {
+            res.writeHead(413, { "content-type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ error: "文件过大" }));
+          }
+          return;
+        }
+        try {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          const name = safeUploadName(payload?.name);
+          const base64 = String(payload?.base64 || "");
+          if (!base64) throw new Error("缺少文件数据");
+          const bytes = Buffer.from(base64, "base64");
+          if (!bytes.length) throw new Error("文件为空");
+          fs.mkdirSync(dir, { recursive: true });
+          const abs = path.resolve(dir, `${Date.now()}-${name}`);
+          if (!abs.startsWith(`${path.resolve(dir)}${path.sep}`)) throw new Error("非法文件名");
+          fs.writeFileSync(abs, bytes);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ path: abs, name }));
+        } catch (error) {
+          res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
+      });
+    },
+  });
+  console.log(`[dsh-cloud-gateway] upload route /api/dsh-gw-upload -> ${dir}`);
+}
+
 function parseBody(req, limit = LOGIN_BODY_LIMIT) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -728,6 +796,12 @@ export function apply(ctx, config = {}) {
     if (current) current.close(() => boot());
     else boot();
   };
+
+  if (typeof ctx.inject === "function") {
+    ctx.inject(["webServer"], (webCtx) => {
+      registerUploadRoute(webCtx);
+    });
+  }
 
   ctx.effect(() => {
     restart();

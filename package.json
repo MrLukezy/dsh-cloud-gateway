@@ -1,12 +1,18 @@
 {
   "name": "dsh-cloud-gateway",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Login wall and public gateway for DeepSeek Harness cloud deploys.",
   "type": "module",
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
   "files": [
     "index.js",
     "pages.js",
+    "client.js",
     "cordis.patch.yml",
     "README.md",
     "docs/setup.md",
@@ -39,6 +45,12 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
     }
   }
 }

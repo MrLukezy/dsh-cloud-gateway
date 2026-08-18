@@ -97,6 +97,10 @@ location /dsh-image-gen { proxy_pass http://127.0.0.1:8080; }
 
 生产环境请再套 TLS。本插件是登录壳，不是 HTTPS；HTTP 下账号密码走明文。
 
+## 拖入文档
+
+官方输入框只接受 png/jpeg/webp/gif。从浏览器拖入 PDF、Markdown、文本等文件时，本插件会保存到 `$DSH_HOME/uploads/`，并把绝对路径写入当前对话框，方便模型按路径阅读。图片拖放仍走官方附件栏。
+
 ## 安全注意
 
 - 不要把真实密码打进即将发布的 `cordis.patch.yml`
