@@ -47,7 +47,7 @@ export function loginPage(basePath, error) {
 <body>
   <div class="shell">
     <h1>DeepSeek Harness</h1>
-    <p class="sub">云端入口。登录后可在右下角打开「网关设置」修改账号、端口和反代选项。</p>
+    <p class="sub">云端入口。登录后可在右下角打开「网关设置」。</p>
     <form class="card" method="post" action="${action}">
       ${message}
       <label for="username">账号</label>
@@ -56,16 +56,6 @@ export function loginPage(basePath, error) {
       <input id="password" name="password" type="password" autocomplete="current-password" required>
       <button type="submit">登录</button>
     </form>
-    <details>
-      <summary>安装后如何配置这些参数</summary>
-      <ol>
-        <li>如果还没自己设密码，到启动 <code>dsh web</code> 的终端或服务日志里找 <code>generated login</code>，或打开 <code>$DSH_HOME/cloud-gateway-state.json</code>。</li>
-        <li>登录后点右下角「网关设置」，可以直接改账号、密码、端口、路径和反向代理选项。</li>
-        <li>也可以用环境变量 <code>DSH_CLOUD_USERNAME</code> / <code>DSH_CLOUD_PASSWORD</code>，适合 systemd 这类部署。</li>
-        <li>启动时必须加 <code>--trusted-host 你的公网IP或域名</code>，否则登录后模型接口会被官方围栏拦住。</li>
-        <li>前面如果有 Nginx，请打开「信任反向代理」，并把 <code>/dsh</code>、<code>/assets/</code>、<code>/plugins/</code>、<code>/api</code> 都反代到网关。</li>
-      </ol>
-    </details>
   </div>
 </body>
 </html>`;
@@ -82,11 +72,13 @@ export function settingsPage(options) {
     error,
   } = options;
   const action = escapeHtml(`${basePath}/settings`);
-  const appHref = escapeHtml(`${basePath}/`);
+  const appHref = `${basePath}/`;
+  const appHrefAttr = escapeHtml(appHref);
+  const closeTo = JSON.stringify(appHref);
   const message = error
-    ? `<p class="error">${escapeHtml(error)}</p>`
+    ? `<p class="banner error">${escapeHtml(error)}</p>`
     : saved
-      ? `<p class="ok">已保存。监听地址或路径若有改动，请用新地址重新打开。</p>`
+      ? `<p class="banner ok">已保存。如果改了端口或路径，请用新地址重新打开。</p>`
       : "";
   const urls = (publicUrls || []).map((url) => `<li><code>${escapeHtml(url)}</code></li>`).join("")
     || "<li>当前没有检测到局域网 IPv4 地址</li>";
@@ -100,73 +92,232 @@ export function settingsPage(options) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>网关设置 · DeepSeek Harness</title>
-  <style>${PAGE_CSS}
-    body { padding: 32px 20px 80px; }
-    .wrap { width: min(720px, 100%); margin: 0 auto; }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
-    .row { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
-    .actions { display: flex; gap: 12px; margin-top: 24px; }
-    .actions button, .actions a { display: inline-flex; align-items: center; justify-content: center; padding: 0 18px; text-decoration: none; }
-    .ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
-    code { color: var(--text); }
+  <style>
+    :root {
+      --text: #1a1d23;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --input: #f8f9fb;
+      --accent: #2563eb;
+      --danger: #b42318;
+      --ok: #067647;
+      --overlay: rgba(15, 23, 42, 0.45);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .overlay {
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 24px 16px;
+      background: var(--overlay);
+    }
+    .dialog {
+      width: min(640px, 100%);
+      max-height: calc(100vh - 48px);
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .head h1 { margin: 0; font-size: 18px; font-weight: 650; }
+    .head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .x {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .x:hover { background: var(--bg); color: var(--text); }
+    form { display: flex; flex-direction: column; min-height: 0; }
+    .body { padding: 8px 20px 8px; overflow: auto; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+    .field { min-width: 0; }
+    .field.wide { grid-column: 1 / -1; }
+    label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+    input, select {
+      width: 100%;
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--input);
+      color: var(--text);
+      padding: 0 12px;
+    }
+    input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--accent); }
+    input:disabled { opacity: 0.65; }
+    .hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .section { margin: 18px 0 8px; font-size: 13px; font-weight: 650; }
+    .check { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+    .check input { width: 16px; height: 16px; }
+    .check label { margin: 0; color: var(--text); font-size: 13px; }
+    .banner { margin: 12px 20px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; }
+    .banner.error { color: var(--danger); background: #fef3f2; }
+    .banner.ok { color: var(--ok); background: #ecfdf3; }
+    .status {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .status ul { margin: 6px 0 8px; padding-left: 18px; }
+    .foot {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 14px 20px 16px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .foot button, .foot a {
+      height: 36px;
+      min-width: 84px;
+      padding: 0 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .foot button { border: 0; background: var(--accent); color: #fff; }
+    .foot a { border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+    code { font-size: 12px; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>网关设置</h1>
-    <p class="sub">这些选项只保存在本机 <code>$DSH_HOME/cloud-gateway-state.json</code>，不会写回插件包。环境变量优先级更高，被环境变量锁住的字段不能在这里改。</p>
-    ${message}
-    <form class="card" method="post" action="${action}">
-      <h2>登录</h2>
-      <label for="username">账号</label>
-      <input id="username" name="username" value="${escapeHtml(values.username || "")}" required${usernameDisabled}>
-      ${envLocked.username ? `<p class="hint">已由环境变量 DSH_CLOUD_USERNAME 锁定</p>` : ""}
-      <label for="password">新密码</label>
-      <input id="password" name="password" type="password" autocomplete="new-password" placeholder="留空则不修改"${passwordDisabled}>
-      ${envLocked.password ? `<p class="hint">已由环境变量 DSH_CLOUD_PASSWORD 锁定</p>` : `<p class="hint">建议至少 8 位。留空表示继续使用当前密码。</p>`}
-
-      <h2>监听</h2>
-      <label for="listenHost">监听地址</label>
-      <input id="listenHost" name="listenHost" value="${escapeHtml(values.listenHost || "0.0.0.0")}" required>
-      <p class="hint">云服务器公网访问用 <code>0.0.0.0</code>。只本机调试可改 <code>127.0.0.1</code>。</p>
-      <label for="listenPort">公网端口</label>
-      <input id="listenPort" name="listenPort" type="number" min="1" max="65535" value="${escapeHtml(values.listenPort)}" required>
-      <p class="hint">必须和本机 <code>dsh web</code> 端口不同。默认 8080，避免和官方 3080 冲突。</p>
-      <label for="basePath">访问路径</label>
-      <input id="basePath" name="basePath" value="${escapeHtml(values.basePath || "/dsh")}" required>
-      <p class="hint">浏览器里的前缀，例如 <code>/dsh</code>。只能包含字母、数字、点、下划线、短横线。</p>
-
-      <h2>反向代理</h2>
-      <div class="row">
-        <input id="trustProxy" name="trustProxy" type="checkbox" value="1"${values.trustProxy ? " checked" : ""}>
-        <label for="trustProxy" style="margin:0">信任反向代理（Nginx / Caddy）</label>
+  <div class="overlay" id="dsh-gw-overlay" data-close-to=${closeTo}>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dsh-gw-title">
+      <div class="head">
+        <div>
+          <h1 id="dsh-gw-title">网关设置</h1>
+          <p>只保存在本机，不会写进插件包。Esc 或点击空白处关闭。</p>
+        </div>
+        <button class="x" type="button" id="dsh-gw-close" aria-label="关闭">×</button>
       </div>
-      <p class="hint">只有前面有你自己的反代时才打开。打开后才会使用 <code>X-Forwarded-For</code> 做登录限流。</p>
-      <label for="secureCookie">Secure Cookie</label>
-      <select id="secureCookie" name="secureCookie">
-        <option value=""${secure === "" ? " selected" : ""}>自动：仅 HTTPS 请求带 Secure</option>
-        <option value="true"${secure === "true" ? " selected" : ""}>始终开启</option>
-        <option value="false"${secure === "false" ? " selected" : ""}>始终关闭</option>
-      </select>
-      <label for="cookiePath">Cookie 路径</label>
-      <input id="cookiePath" name="cookiePath" value="${escapeHtml(values.cookiePath || "/")}">
-      <p class="hint">如果 <code>/assets</code>、<code>/plugins</code>、<code>/api</code> 在站点根路径，保持 <code>/</code>。</p>
+      ${message}
+      <form method="post" action="${action}">
+        <div class="body">
+          <div class="section">登录</div>
+          <div class="grid">
+            <div class="field">
+              <label for="username">账号</label>
+              <input id="username" name="username" value="${escapeHtml(values.username || "")}" required${usernameDisabled}>
+              ${envLocked.username ? `<p class="hint">已由 DSH_CLOUD_USERNAME 锁定</p>` : ""}
+            </div>
+            <div class="field">
+              <label for="password">新密码</label>
+              <input id="password" name="password" type="password" autocomplete="new-password" placeholder="留空则不修改"${passwordDisabled}>
+              ${envLocked.password ? `<p class="hint">已由 DSH_CLOUD_PASSWORD 锁定</p>` : `<p class="hint">建议至少 8 位</p>`}
+            </div>
+          </div>
 
-      <div class="actions">
-        <button type="submit">保存设置</button>
-        <a class="ghost" href="${appHref}">返回工作台</a>
-      </div>
-    </form>
+          <div class="section">监听</div>
+          <div class="grid">
+            <div class="field">
+              <label for="listenHost">监听地址</label>
+              <input id="listenHost" name="listenHost" value="${escapeHtml(values.listenHost || "0.0.0.0")}" required>
+              <p class="hint">公网用 0.0.0.0，本机调试用 127.0.0.1</p>
+            </div>
+            <div class="field">
+              <label for="listenPort">公网端口</label>
+              <input id="listenPort" name="listenPort" type="number" min="1" max="65535" value="${escapeHtml(values.listenPort)}" required>
+              <p class="hint">必须和 dsh web 端口不同</p>
+            </div>
+            <div class="field wide">
+              <label for="basePath">访问路径</label>
+              <input id="basePath" name="basePath" value="${escapeHtml(values.basePath || "/dsh")}" required>
+            </div>
+          </div>
 
-    <h2>当前状态</h2>
-    <div class="card readonly">
-      <p>上游 Harness：<code>${escapeHtml(upstream)}</code></p>
-      <p>可尝试的地址：</p>
-      <ul>${urls}</ul>
-      <p>启动 <code>dsh web</code> 时请带上 <code>--trusted-host</code>，值改成你的公网 IP 或域名，不要照抄别人的机器信息。</p>
-      <p>若要用 80/443，把 <code>/dsh</code>、<code>/assets/</code>、<code>/plugins/</code>、<code>/api</code> 都反代到上面的监听端口，并打开「信任反向代理」。</p>
+          <div class="section">反向代理</div>
+          <div class="grid">
+            <div class="field">
+              <div class="check">
+                <input id="trustProxy" name="trustProxy" type="checkbox" value="1"${values.trustProxy ? " checked" : ""}>
+                <label for="trustProxy">信任反向代理</label>
+              </div>
+              <p class="hint">仅在前面有 Nginx / Caddy 时打开</p>
+            </div>
+            <div class="field">
+              <label for="secureCookie">Secure Cookie</label>
+              <select id="secureCookie" name="secureCookie">
+                <option value=""${secure === "" ? " selected" : ""}>自动（仅 HTTPS）</option>
+                <option value="true"${secure === "true" ? " selected" : ""}>始终开启</option>
+                <option value="false"${secure === "false" ? " selected" : ""}>始终关闭</option>
+              </select>
+            </div>
+            <div class="field wide">
+              <label for="cookiePath">Cookie 路径</label>
+              <input id="cookiePath" name="cookiePath" value="${escapeHtml(values.cookiePath || "/")}">
+            </div>
+          </div>
+
+          <div class="status">
+            <div>上游：<code>${escapeHtml(upstream)}</code></div>
+            <div>可尝试地址</div>
+            <ul>${urls}</ul>
+            <div>启动时请加 <code>--trusted-host</code>。80/443 需要把 /dsh、/assets、/plugins、/api 都反代过来。</div>
+          </div>
+        </div>
+        <div class="foot">
+          <a href="${appHrefAttr}" id="dsh-gw-cancel">取消</a>
+          <button type="submit">保存</button>
+        </div>
+      </form>
     </div>
   </div>
+  <script>
+    (function () {
+      var overlay = document.getElementById("dsh-gw-overlay");
+      var closeTo = overlay && overlay.getAttribute("data-close-to");
+      function closeSettings() {
+        if (closeTo) location.href = closeTo;
+      }
+      if (overlay) {
+        overlay.addEventListener("click", function (event) {
+          if (event.target === overlay) closeSettings();
+        });
+      }
+      var closeBtn = document.getElementById("dsh-gw-close");
+      if (closeBtn) closeBtn.addEventListener("click", closeSettings);
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeSettings();
+        }
+      });
+    })();
+  </script>
 </body>
 </html>`;
 }
