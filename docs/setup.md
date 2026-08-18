@@ -17,6 +17,14 @@
 
 4. 登录后打开官方 **设置 → 网关**，再点 **网关设置**。可以改账号、密码、监听地址、端口、路径、是否信任 Nginx。设置只保存在本机 state 文件，不会写回插件包。Esc 或点击空白处关闭设置窗。同一页也可以退出登录。
 
+5. 如果要用手机竖屏访问，再装社区插件 [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile)：
+
+   ```bash
+   dsh plugin --profile web add github:mexiaosqwq/dsh-web-mobile
+   ```
+
+   它和本插件不冲突：网关管登录，竖屏插件管窄屏布局。电脑宽屏几乎不受影响。
+
 ## 三种配法，优先级从高到低
 
 1. 环境变量 `DSH_CLOUD_USERNAME` / `DSH_CLOUD_PASSWORD` / `DSH_CLOUD_SECRET`  

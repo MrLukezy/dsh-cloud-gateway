@@ -27,6 +27,20 @@ http://YOUR_PUBLIC_IP:8080/dsh
 
 本地目录也可以：`dsh plugin --profile web add ./dsh-cloud-gateway`。
 
+## 手机访问
+
+本插件只提供登录和反代，不改官方桌面布局。手机竖屏打开会挤，侧栏也不好用。
+
+如果主要用手机进云端工作台，建议和社区竖屏插件 [dsh-web-mobile](https://github.com/mexiaosqwq/dsh-web-mobile) 一起装，两个插件可以放在同一个 `web` profile：
+
+```bash
+dsh plugin --profile web add github:MrLukezy/dsh-cloud-gateway
+dsh plugin --profile web add github:mexiaosqwq/dsh-web-mobile
+dsh web --trusted-host YOUR_PUBLIC_IP --trusted-host your.example.com
+```
+
+`dsh-cloud-gateway` 负责公网登录，`dsh-web-mobile`（包名 `@dsh-external/dsh-mobile-nav`）负责窄屏抽屉、会话全宽和设置页适配。电脑宽屏布局基本不变。
+
 ## 配置引导
 
 完整步骤、字段说明和 Nginx 示例见 [docs/setup.md](docs/setup.md)。最短路径：

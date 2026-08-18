@@ -1,11 +1,12 @@
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { apply } from "./index.js";
 
 process.env.DSH_HOME = path.join(os.tmpdir(), "dsh-cloud-gateway-smoke");
 
-const seen = { host: "", origin: "", site: "" };
+const seen = { host: "", origin: "", site: "", upgradeConnection: "", upgradeHost: "" };
 const upstream = http.createServer((req, res) => {
   if (req.url.startsWith("/api/")) {
     seen.host = String(req.headers.host || "");
@@ -17,6 +18,12 @@ const upstream = http.createServer((req, res) => {
   }
   res.writeHead(200, { "content-type": "text/html" });
   res.end("<html><head></head><body>ok</body></html>");
+});
+upstream.on("upgrade", (req, socket) => {
+  seen.upgradeConnection = String(req.headers.connection || "");
+  seen.upgradeHost = String(req.headers.host || "");
+  socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+  socket.end();
 });
 await new Promise((resolve) => upstream.listen(18081, "127.0.0.1", resolve));
 
@@ -63,6 +70,32 @@ const saved = await fetch("http://127.0.0.1:18080/dsh/settings", {
 });
 const savedHtml = await saved.text();
 await new Promise((resolve) => setTimeout(resolve, 300));
+const wsStatus = await new Promise((resolve, reject) => {
+  const socket = net.connect(18080, "127.0.0.1");
+  let data = "";
+  socket.on("error", reject);
+  socket.on("data", (chunk) => {
+    data += chunk.toString("latin1");
+    if (data.includes("\r\n\r\n")) {
+      socket.end();
+      resolve(data.split("\r\n", 1)[0]);
+    }
+  });
+  socket.on("connect", () => {
+    socket.write([
+      "GET /api/events.mux HTTP/1.1",
+      "Host: example.test",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+      "Sec-WebSocket-Version: 13",
+      "Origin: http://example.test",
+      `Cookie: ${cookie.split(";", 1)[0]}`,
+      "",
+      "",
+    ].join("\r\n"));
+  });
+});
 const api = await fetch("http://127.0.0.1:18080/api/settings.describe", {
   method: "POST",
   headers: {
@@ -92,6 +125,10 @@ console.log({
   saved: saved.status,
   savedOk: savedHtml.includes("已保存"),
   api: api.status,
+  ws: wsStatus,
+  wsUpgraded: wsStatus.includes("101"),
+  upgradeConnection: seen.upgradeConnection,
+  upgradeHost: seen.upgradeHost,
   upstreamHost: seen.host,
   upstreamOrigin: seen.origin,
   strippedSite: seen.site === "",

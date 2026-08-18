@@ -156,11 +156,17 @@ function writeProxyHead(socket, res) {
   socket.write("\r\n");
 }
 
-function proxyHeaders(req, target) {
+function proxyHeaders(req, target, options = {}) {
   const headers = { ...req.headers, "accept-encoding": "identity" };
-  delete headers.connection;
   delete headers["keep-alive"];
   delete headers["proxy-connection"];
+  if (options.upgrade) {
+    headers.connection = "Upgrade";
+    if (req.headers.upgrade) headers.upgrade = req.headers.upgrade;
+  } else {
+    delete headers.connection;
+    delete headers.upgrade;
+  }
   // Official dsh pins settings.describe and other privileged RPCs to loopback
   // even when --trusted-host is set. After our login wall, present as the
   // local Harness so the configuration plane can load.
@@ -356,7 +362,7 @@ function startGateway(options) {
       port: target.port || 80,
       method: "GET",
       path: req.url,
-      headers: proxyHeaders(req, target),
+      headers: proxyHeaders(req, target, { upgrade: true }),
     });
     proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
       writeProxyHead(socket, proxyRes);
