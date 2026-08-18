@@ -82,15 +82,17 @@ dsh web --trusted-host YOUR_PUBLIC_IP --trusted-host your.example.com
 - `/assets/`
 - `/plugins/`
 - `/api`
+- `/dsh-image-gen`（生图插件的读图 RPC，在站点根路径，不在 `/dsh` 下）
 - `/favicon.svg` `/favicon.ico` `/manifest.webmanifest`
 
-只反代 `/dsh`、不反代站点根路径的静态资源和 API，登录后会白屏。
+只反代 `/dsh`、不反代站点根路径的静态资源和 API，登录后会白屏。生图预览会请求 `/dsh-image-gen/...`，漏反代时图片已生成但页面读不到。
 
 ```nginx
 location /dsh { proxy_pass http://127.0.0.1:8080; }
 location /assets/ { proxy_pass http://127.0.0.1:8080; }
 location /plugins/ { proxy_pass http://127.0.0.1:8080; }
 location /api { proxy_pass http://127.0.0.1:8080; }
+location /dsh-image-gen { proxy_pass http://127.0.0.1:8080; }
 ```
 
 生产环境请再套 TLS。本插件是登录壳，不是 HTTPS；HTTP 下账号密码走明文。

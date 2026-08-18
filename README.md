@@ -48,7 +48,7 @@ dsh web --trusted-host YOUR_PUBLIC_IP --trusted-host your.example.com
 1. 没自己设密码时，到 `dsh web` 日志里找 `generated login`。
 2. 登录后打开 **设置 → 网关**，再点 **网关设置**，改账号、密码、端口和是否信任反代。也可以在同一页退出登录。
 3. 启动命令必须带 `--trusted-host`，否则登录后接口会被官方围栏拦住。
-4. 前面如果有 Nginx，打开「信任反向代理」，并把 `/dsh`、`/assets/`、`/plugins/`、`/api` 都反代到网关。
+4. 前面如果有 Nginx，打开「信任反向代理」，并把 `/dsh`、`/assets/`、`/plugins/`、`/api`、`/dsh-image-gen` 都反代到网关。
 
 ## 文档
 
