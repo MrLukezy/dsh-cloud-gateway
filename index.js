@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
 import Schema from "@deepseek-ai/schemastery";
-import { loginPage, settingsPage, toolbarHtml } from "./pages.js";
+import { loginPage, settingsPage, settingsHookHtml } from "./pages.js";
 
 export const name = "dsh-cloud-gateway";
 export const inject = ["webStartup"];
@@ -285,9 +285,9 @@ function startGateway(options) {
     if (body.includes("<head>") && !body.includes("c.randomUUID=function")) {
       body = body.replace("<head>", `<head>${UUID_POLYFILL}`);
     }
-    if (!body.includes('id="dsh-gw-logout"')) {
-      const bar = toolbarHtml(settingsPath, logoutPath);
-      body = body.includes("</body>") ? body.replace("</body>", `${bar}</body>`) : body + bar;
+    if (!body.includes('id="dsh-gw-hook"')) {
+      const hook = settingsHookHtml(settingsPath, logoutPath);
+      body = body.includes("</body>") ? body.replace("</body>", `${hook}</body>`) : body + hook;
     }
     return body;
   }

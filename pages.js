@@ -47,7 +47,7 @@ export function loginPage(basePath, error) {
 <body>
   <div class="shell">
     <h1>DeepSeek Harness</h1>
-    <p class="sub">云端入口。登录后可在右下角打开「网关设置」。</p>
+    <p class="sub">云端入口。登录后可在「设置 → 网关」里改账号或退出。</p>
     <form class="card" method="post" action="${action}">
       ${message}
       <label for="username">账号</label>
@@ -322,8 +322,151 @@ export function settingsPage(options) {
 </html>`;
 }
 
-export function toolbarHtml(settingsPath, logoutPath) {
-  const settings = escapeHtml(settingsPath);
-  const logout = escapeHtml(logoutPath);
-  return `<style>#dsh-gw-bar{position:fixed;right:16px;bottom:24px;z-index:2147483647;display:flex;gap:8px}#dsh-gw-bar a{display:inline-flex;align-items:center;height:40px;padding:0 14px;border-radius:999px;background:#1f2937;color:#fff;font:600 14px/1 sans-serif;text-decoration:none}</style><div id="dsh-gw-bar"><a id="dsh-gw-settings" href="${settings}">网关设置</a><a id="dsh-gw-logout" href="${logout}">退出登录</a></div>`;
+export function settingsHookHtml(settingsPath, logoutPath) {
+  const settings = JSON.stringify(settingsPath);
+  const logout = JSON.stringify(logoutPath);
+  return `<style id="dsh-gw-hook-css">
+[data-dsh-gw-hide]{display:none!important}
+#dsh-gw-panel{display:flex;flex-direction:column;gap:10px;padding-top:4px}
+#dsh-gw-panel h2{margin:0;font-size:16px;font-weight:650;color:var(--dsw-alias-label-primary,inherit)}
+#dsh-gw-panel .dsh-gw-lead{margin:0 0 6px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-secondary,#6b7280)}
+#dsh-gw-panel a{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.22));border-radius:12px;text-decoration:none;color:inherit;background:var(--dsw-alias-bg-primary,transparent)}
+#dsh-gw-panel a:hover{background:var(--dsw-specific-sidebar-nav-item-hover,rgba(127,127,127,.08))}
+#dsh-gw-panel strong{display:block;font-size:14px;font-weight:600}
+#dsh-gw-panel span{display:block;margin-top:2px;font-size:12px;line-height:1.45;color:var(--dsw-alias-label-secondary,#6b7280)}
+#dsh-gw-panel i{font-style:normal;color:var(--dsw-alias-label-secondary,#6b7280)}
+</style>
+<script id="dsh-gw-hook">
+(function () {
+  var SETTINGS = ${settings};
+  var LOGOUT = ${logout};
+  var NAV_ID = "dsh-gw-nav";
+  var PANEL_ID = "dsh-gw-panel";
+
+  function endsClass(el, suffix) {
+    var list = String(el && el.className || "").split(/\\s+/);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].slice(-suffix.length) === suffix) return list[i];
+    }
+    return "";
+  }
+
+  function findSettings() {
+    var dialogs = document.querySelectorAll('[aria-modal="true"]');
+    for (var i = 0; i < dialogs.length; i++) {
+      var nav = dialogs[i].querySelector('[class$="_navList"]');
+      if (!nav) continue;
+      return {
+        dialog: dialogs[i],
+        nav: nav,
+        options: dialogs[i].querySelector('[class$="_options"]')
+      };
+    }
+    return null;
+  }
+
+  function activeClass(nav) {
+    var cells = nav.querySelectorAll('[class$="_navCell"]');
+    for (var i = 0; i < cells.length; i++) {
+      var cls = endsClass(cells[i], "_active");
+      if (cls) return cls;
+    }
+    var sample = nav.querySelector('[class$="_navCell"]');
+    var base = sample && endsClass(sample, "_navCell");
+    return base ? base.replace(/_navCell$/, "_active") : "";
+  }
+
+  function makeNav(nav) {
+    if (document.getElementById(NAV_ID)) return;
+    var sample = nav.querySelector('[class$="_navCell"]');
+    if (!sample) return;
+    var cell = sample.cloneNode(true);
+    cell.id = NAV_ID;
+    cell.removeAttribute("aria-current");
+    var act = endsClass(cell, "_active");
+    if (act) cell.classList.remove(act);
+    var label = cell.querySelector('[class$="_navLabel"]');
+    if (label) label.textContent = "网关";
+    else cell.textContent = "网关";
+    var icon = cell.querySelector("svg");
+    if (icon) {
+      icon.setAttribute("viewBox", "0 0 16 16");
+      icon.setAttribute("width", "16");
+      icon.setAttribute("height", "16");
+      icon.innerHTML = '<path fill="currentColor" d="M8 1.5A2.5 2.5 0 0 0 5.5 4v1.5H5A1.5 1.5 0 0 0 3.5 7v5A1.5 1.5 0 0 0 5 13.5h6A1.5 1.5 0 0 0 12.5 12V7A1.5 1.5 0 0 0 11 5.5h-.5V4A2.5 2.5 0 0 0 8 1.5Zm-1 4V4a1 1 0 1 1 2 0v1.5h-2Z"/>';
+    }
+    cell.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      showPanel();
+    });
+    nav.appendChild(cell);
+  }
+
+  function showPanel() {
+    var found = findSettings();
+    if (!found || !found.options) return;
+    var navBtn = document.getElementById(NAV_ID);
+    var act = activeClass(found.nav);
+    var cells = found.nav.querySelectorAll('[class$="_navCell"]');
+    for (var i = 0; i < cells.length; i++) {
+      if (act) cells[i].classList.remove(act);
+      cells[i].removeAttribute("aria-current");
+    }
+    if (navBtn) {
+      if (act) navBtn.classList.add(act);
+      navBtn.setAttribute("aria-current", "true");
+      navBtn.setAttribute("data-dsh-gw-active", "1");
+    }
+    var kids = found.options.children;
+    for (var j = 0; j < kids.length; j++) {
+      if (kids[j].id !== PANEL_ID) kids[j].setAttribute("data-dsh-gw-hide", "1");
+    }
+    var panel = document.getElementById(PANEL_ID);
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = PANEL_ID;
+      panel.innerHTML = '<h2>云端网关</h2><p class="dsh-gw-lead">账号、端口和退出登录。</p><a id="dsh-gw-settings"><div><strong>网关设置</strong><span>改账号、密码、端口和反代</span></div><i>›</i></a><a id="dsh-gw-logout"><div><strong>退出登录</strong><span>清除当前浏览器的登录状态</span></div><i>›</i></a>';
+      panel.querySelector("#dsh-gw-settings").href = SETTINGS;
+      panel.querySelector("#dsh-gw-logout").href = LOGOUT;
+      found.options.appendChild(panel);
+    }
+  }
+
+  function hidePanel() {
+    var navBtn = document.getElementById(NAV_ID);
+    if (navBtn) {
+      navBtn.removeAttribute("data-dsh-gw-active");
+      navBtn.removeAttribute("aria-current");
+      var act = endsClass(navBtn, "_active");
+      if (act) navBtn.classList.remove(act);
+    }
+    var panel = document.getElementById(PANEL_ID);
+    if (panel) panel.remove();
+    var hidden = document.querySelectorAll("[data-dsh-gw-hide]");
+    for (var i = 0; i < hidden.length; i++) hidden[i].removeAttribute("data-dsh-gw-hide");
+  }
+
+  function onDocClick(event) {
+    var target = event.target;
+    if (!target || !target.closest) return;
+    if (target.closest("#" + NAV_ID)) return;
+    if (target.closest('[class$="_navCell"]')) hidePanel();
+  }
+
+  function tick() {
+    var found = findSettings();
+    if (!found) return;
+    makeNav(found.nav);
+    var navBtn = document.getElementById(NAV_ID);
+    if (navBtn && navBtn.getAttribute("data-dsh-gw-active") === "1" && !document.getElementById(PANEL_ID)) {
+      showPanel();
+    }
+  }
+
+  document.addEventListener("click", onDocClick, true);
+  new MutationObserver(tick).observe(document.documentElement, { childList: true, subtree: true });
+  tick();
+})();
+</script>`;
 }
