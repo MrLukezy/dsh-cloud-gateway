@@ -57,6 +57,33 @@ window.__ModuleLoader__.load({
       return `请阅读 ${tokens}`;
     }
 
+    function openFileInBrowser(filePath, token) {
+      const path = String(filePath || "").trim();
+      if (token) {
+        windowOpen(`/api/dsh-gw-file?token=${encodeURIComponent(token)}`);
+        return true;
+      }
+      if (!path || path === ".") return false;
+      windowOpen(`/api/dsh-gw-file?path=${encodeURIComponent(path)}`);
+      return true;
+    }
+
+    function windowOpen(url) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+
+    function looksLikeFsPath(value) {
+      const text = String(value || "").trim();
+      if (!text || text === ".") return false;
+      return /^[A-Za-z]:[\\/]/.test(text) || text.startsWith("/");
+    }
+
     const plugin = {
       name: "dsh-cloud-gateway-client",
       inject: ["slots"],
@@ -93,12 +120,23 @@ window.__ModuleLoader__.load({
           const onEscape = (event) => {
             if (event.key === "Escape") clearOfficialDropOverlay();
           };
+          const onFileClick = (event) => {
+            const el = event.target.closest?.("button, [data-ref-chip], [data-produced-files-row] button");
+            if (!el) return;
+            const title = el.getAttribute("title") || "";
+            if (!looksLikeFsPath(title)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            openFileInBrowser(title);
+          };
           document.addEventListener("dragover", onDragOver, true);
           document.addEventListener("drop", onDrop, true);
+          document.addEventListener("click", onFileClick, true);
           window.addEventListener("keydown", onEscape, true);
           return () => {
             document.removeEventListener("dragover", onDragOver, true);
             document.removeEventListener("drop", onDrop, true);
+            document.removeEventListener("click", onFileClick, true);
             window.removeEventListener("keydown", onEscape, true);
           };
         });

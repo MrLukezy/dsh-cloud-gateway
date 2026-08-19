@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import Schema from "@deepseek-ai/schemastery";
 import { loginPage, settingsPage, settingsHookHtml } from "./pages.js";
+import { markdownPreviewPage } from "./markdown.js";
 
 export const name = "dsh-cloud-gateway";
 export const inject = ["webStartup"];
@@ -13,7 +14,18 @@ const COOKIE = "dsh_gw";
 const MAX_AGE = 7 * 24 * 3600;
 const LOGIN_BODY_LIMIT = 8 * 1024;
 const HTML_INJECT_LIMIT = 2 * 1024 * 1024;
+const MARKDOWN_PREVIEW_LIMIT = 2 * 1024 * 1024;
 const PUBLIC_PATHS = new Set(["/favicon.svg", "/favicon.ico", "/manifest.webmanifest"]);
+const HOP_BY_HOP = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailers",
+  "transfer-encoding",
+  "upgrade",
+]);
 const STATE_FILE = "cloud-gateway-state.json";
 const UUID_POLYFILL = `<script>(function(){try{var c=globalThis.crypto;if(!c||typeof c.randomUUID==="function")return;if(typeof c.getRandomValues!=="function")return;c.randomUUID=function(){var b=new Uint8Array(16);c.getRandomValues(b);b[6]=b[6]&15|64;b[8]=b[8]&63|128;var h=[];for(var j=0;j<16;j++)h.push((b[j]>>4).toString(16)+(b[j]&15).toString(16));return h[0]+h[1]+h[2]+h[3]+"-"+h[4]+h[5]+"-"+h[6]+h[7]+"-"+h[8]+h[9]+"-"+h[10]+h[11]+h[12]+h[13]+h[14]+h[15]};}catch(e){}})();</script>`;
 
@@ -239,6 +251,155 @@ export function registerUploadRoute(ctx) {
   console.log(`[dsh-cloud-gateway] upload route /api/dsh-gw-upload -> ${dir}`);
 }
 
+const SECRET_BASENAMES = new Set([
+  ".credentials.yaml",
+  "cloud-gateway-state.json",
+  ".env",
+  "id_rsa",
+  "id_ed25519",
+]);
+
+function contentDisposition(name, kind = "inline") {
+  const raw = String(name || "file").replace(/["\\\r\n\t]/g, "_");
+  const ascii = raw.replace(/[^\x20-\x7E]/g, "_").replace(/_+/g, "_") || "file";
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(raw)}`;
+}
+
+function fileContentType(name) {
+  const ext = String(name).split(".").pop()?.toLowerCase();
+  const map = {
+    md: "text/plain; charset=utf-8",
+    markdown: "text/plain; charset=utf-8",
+    txt: "text/plain; charset=utf-8",
+    json: "application/json; charset=utf-8",
+    csv: "text/csv; charset=utf-8",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    html: "text/html; charset=utf-8",
+    pdf: "application/pdf",
+  };
+  return map[ext] || "text/plain; charset=utf-8";
+}
+
+let openFileHostCtx = { get() {} };
+
+function collectAllowedRoots(hostCtx) {
+  const roots = [path.resolve(uploadDir()), path.resolve(os.homedir())];
+  const add = (value) => {
+    if (typeof value !== "string" || !value.trim()) return;
+    try {
+      roots.push(fs.realpathSync(value));
+    } catch {
+      roots.push(path.resolve(value));
+    }
+  };
+  try {
+    for (const ws of hostCtx.get?.("workspaceRegistry")?.list?.() || []) {
+      add(ws.path || ws.cwd);
+    }
+  } catch {
+    // registry optional
+  }
+  try {
+    const sessions = hostCtx.get?.("sessions") || hostCtx.sessions;
+    for (const session of sessions?.list?.() || []) {
+      add(session.cwd || session.header?.cwd);
+    }
+  } catch {
+    // sessions optional
+  }
+  return [...new Set(roots)];
+}
+
+export function resolveOpenFile(hostCtx, rawPath, token) {
+  const dir = uploadDir();
+  if (token) {
+    if (!/^[\w-]+$/.test(token)) return null;
+    const item = readUploadManifest(dir)[token];
+    const abs = path.resolve(dir, path.basename(item?.path || token));
+    if (!fs.existsSync(abs)) return null;
+    return { abs, name: item?.name || token };
+  }
+  const requested = String(rawPath || "").trim();
+  if (!requested || requested === ".") return null;
+  const abs = path.resolve(requested);
+  const name = path.basename(abs);
+  if (SECRET_BASENAMES.has(name) || name.endsWith(".pem")) return null;
+  let real;
+  try {
+    real = fs.realpathSync(abs);
+  } catch {
+    return null;
+  }
+  if (!fs.statSync(real).isFile()) return null;
+  const allowed = collectAllowedRoots(hostCtx).some((root) => real === root || real.startsWith(`${root}${path.sep}`));
+  if (!allowed) return null;
+  return { abs: real, name };
+}
+
+function serveOpenFile(req, res) {
+  try {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    const url = requestUrl(req);
+    const found = resolveOpenFile(openFileHostCtx, url.searchParams.get("path"), url.searchParams.get("token"));
+    if (!found) {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("文件不存在或无权打开");
+      return;
+    }
+    const raw = url.searchParams.get("raw") === "1";
+    const markdown = /\.(md|markdown)$/i.test(found.name) && !raw;
+    if (markdown && fs.statSync(found.abs).size <= MARKDOWN_PREVIEW_LIMIT) {
+      const rawUrl = new URL(url.href);
+      rawUrl.searchParams.set("raw", "1");
+      const html = markdownPreviewPage(found.name, fs.readFileSync(found.abs, "utf8"), `${rawUrl.pathname}${rawUrl.search}`);
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-disposition": "inline",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      });
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      res.end(html);
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": fileContentType(found.name),
+      "content-disposition": contentDisposition(found.name),
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    const stream = fs.createReadStream(found.abs);
+    stream.on("error", () => {
+      if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+      res.end();
+    });
+    stream.pipe(res);
+  } catch {
+    if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    if (!res.writableEnded) res.end("打开文件失败");
+  }
+}
+
+export function registerFileOpenRoute(webCtx, hostCtx) {
+  openFileHostCtx = hostCtx || openFileHostCtx;
+  console.log("[dsh-cloud-gateway] file open route /api/dsh-gw-file");
+}
+
 function parseBody(req, limit = LOGIN_BODY_LIMIT) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -255,6 +416,24 @@ function parseBody(req, limit = LOGIN_BODY_LIMIT) {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+}
+
+function outboundHeaders(headers) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (HOP_BY_HOP.has(key.toLowerCase())) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+function shouldInjectHtml(pathname, contentType) {
+  if (!String(contentType).includes("text/html")) return false;
+  const pathOnly = String(pathname || "/").split("?")[0];
+  if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return false;
+  if (pathOnly === "/query-balance" || pathOnly.startsWith("/query-balance/")) return false;
+  if (pathOnly === "/dsh-image-gen" || pathOnly.startsWith("/dsh-image-gen/")) return false;
+  return true;
 }
 
 function writeProxyHead(socket, res) {
@@ -414,6 +593,7 @@ function startGateway(options) {
 
   function proxyWeb(req, res) {
     rewriteUpstreamUrl(req);
+    const pathname = String(req.url || "/").split("?")[0];
     const proxyReq = http.request({
       protocol: target.protocol,
       hostname: target.hostname,
@@ -423,8 +603,8 @@ function startGateway(options) {
       headers: proxyHeaders(req, target),
     }, (proxyRes) => {
       const contentType = String(proxyRes.headers["content-type"] || "");
-      if (!contentType.includes("text/html")) {
-        res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+      if (!shouldInjectHtml(pathname, contentType)) {
+        res.writeHead(proxyRes.statusCode || 200, outboundHeaders(proxyRes.headers));
         proxyRes.pipe(res);
         return;
       }
@@ -442,7 +622,7 @@ function startGateway(options) {
           res.end("上游页面过大");
           return;
         }
-        const headers = { ...proxyRes.headers };
+        const headers = outboundHeaders(proxyRes.headers);
         delete headers["content-length"];
         delete headers["content-encoding"];
         res.writeHead(proxyRes.statusCode || 200, headers);
@@ -645,6 +825,11 @@ function startGateway(options) {
       return;
     }
 
+    if (pathname === "/api/dsh-gw-file") {
+      serveOpenFile(req, res);
+      return;
+    }
+
     proxyWeb(req, res);
   });
 
@@ -843,9 +1028,11 @@ export function apply(ctx, config = {}) {
     else boot();
   };
 
+  openFileHostCtx = ctx;
   if (typeof ctx.inject === "function") {
     ctx.inject(["webServer"], (webCtx) => {
       registerUploadRoute(webCtx);
+      registerFileOpenRoute(webCtx, ctx);
     });
   }
 

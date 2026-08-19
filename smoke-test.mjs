@@ -4,12 +4,20 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { EventEmitter } from "node:events";
-import { apply, registerUploadRoute } from "./index.js";
+import { apply, registerUploadRoute, resolveOpenFile } from "./index.js";
 
 process.env.DSH_HOME = path.join(os.tmpdir(), "dsh-cloud-gateway-smoke");
 
 const seen = { host: "", origin: "", site: "", upgradeConnection: "", upgradeHost: "" };
 const upstream = http.createServer((req, res) => {
+  if (req.url.startsWith("/api/dsh-gw-file") || req.url.startsWith("/api/dsh-mobile-files")) {
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-disposition": "inline; filename=\"note.md\"",
+    });
+    res.end("<html><head></head><body># hello md</body></html>");
+    return;
+  }
   if (req.url.startsWith("/api/")) {
     seen.host = String(req.headers.host || "");
     seen.origin = String(req.headers.origin || "");
@@ -99,6 +107,10 @@ const wsStatus = await new Promise((resolve, reject) => {
     ].join("\r\n"));
   });
 });
+const filePage = await fetch("http://127.0.0.1:18080/api/dsh-mobile-files?token=note", {
+  headers: { cookie },
+});
+const fileHtml = await filePage.text();
 const api = await fetch("http://127.0.0.1:18080/api/settings.describe", {
   method: "POST",
   headers: {
@@ -162,6 +174,9 @@ console.log({
   saved: saved.status,
   savedOk: savedHtml.includes("已保存"),
   api: api.status,
+  filePage: filePage.status,
+  filePassthrough: fileHtml.includes("# hello md") && !fileHtml.includes("dsh-gw-hook"),
+  fileType: filePage.headers.get("content-type"),
   ws: wsStatus,
   wsUpgraded: wsStatus.includes("101"),
   upgradeConnection: seen.upgradeConnection,
@@ -171,6 +186,35 @@ console.log({
   strippedSite: seen.site === "",
   uploadOk: upload.status === 200,
   uploadPath: Boolean(upload.path) && fs.existsSync(upload.path),
+  openUpload: Boolean(resolveOpenFile({}, "", upload.token)),
+  denySecret: resolveOpenFile({}, path.join(process.env.DSH_HOME, ".credentials.yaml"), "") === null,
+  gwFile: (await fetch(`http://127.0.0.1:18080/api/dsh-gw-file?path=${encodeURIComponent(upload.path)}`, { headers: { cookie } })).status,
+  ...await (async () => {
+    const cnPath = path.join(path.dirname(upload.path), "设计文档_v2.md");
+    fs.writeFileSync(cnPath, [
+      "# 中文文档",
+      "",
+      "> 修订",
+      "> - **重点**",
+      "",
+      "| 关卡 | 玩法 |",
+      "|---|---|",
+      "| 1 | 记忆 |",
+      "",
+      "- 列表项",
+      "",
+    ].join("\n"));
+    const cnUrl = `http://127.0.0.1:18080/api/dsh-gw-file?path=${encodeURIComponent(cnPath)}`;
+    const cnRes = await fetch(cnUrl, { headers: { cookie } });
+    const cnHtml = await cnRes.text();
+    const rawRes = await fetch(`${cnUrl}&raw=1`, { headers: { cookie } });
+    return {
+      gwFileCn: cnRes.status,
+      gwFileCnHtml: String(cnRes.headers.get("content-type") || "").includes("text/html") && !cnHtml.includes("dsh-gw-hook"),
+      gwFileCnRendered: cnHtml.includes("<h1>中文文档</h1>") && cnHtml.includes("<table") && cnHtml.includes("<strong>重点</strong>"),
+      gwFileCnRaw: rawRes.status === 200 && String(rawRes.headers.get("content-type") || "").includes("text/plain") && (await rawRes.text()).includes("# 中文文档"),
+    };
+  })(),
 });
 
 for (const stop of effects) stop?.();
