@@ -189,6 +189,7 @@ console.log({
   openUpload: Boolean(resolveOpenFile({}, "", upload.token)),
   denySecret: resolveOpenFile({}, path.join(process.env.DSH_HOME, ".credentials.yaml"), "") === null,
   gwFile: (await fetch(`http://127.0.0.1:18080/api/dsh-gw-file?path=${encodeURIComponent(upload.path)}`, { headers: { cookie } })).status,
+  gwBrowse: (await fetch(`http://127.0.0.1:18080/api/dsh-gw-browse?path=${encodeURIComponent(path.dirname(upload.path))}`, { headers: { cookie } })).status,
   ...await (async () => {
     const cnPath = path.join(path.dirname(upload.path), "设计文档_v2.md");
     fs.writeFileSync(cnPath, [

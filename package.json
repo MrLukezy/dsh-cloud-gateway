@@ -1,6 +1,6 @@
 {
   "name": "dsh-cloud-gateway",
-  "version": "0.3.10",
+  "version": "0.3.13",
   "description": "Login wall and public gateway for DeepSeek Harness cloud deploys.",
   "type": "module",
   "main": "index.js",

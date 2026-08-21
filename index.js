@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import Schema from "@deepseek-ai/schemastery";
 import { loginPage, settingsPage, settingsHookHtml } from "./pages.js";
-import { markdownPreviewPage } from "./markdown.js";
+import { markdownPreviewPage, fileBrowserPage } from "./markdown.js";
 
 export const name = "dsh-cloud-gateway";
 export const inject = ["webStartup"];
@@ -338,6 +338,86 @@ export function resolveOpenFile(hostCtx, rawPath, token) {
   const allowed = collectAllowedRoots(hostCtx).some((root) => real === root || real.startsWith(`${root}${path.sep}`));
   if (!allowed) return null;
   return { abs: real, name };
+}
+
+const BROWSE_SKIP_DIRS = new Set(["node_modules", ".git", ".cache"]);
+
+function resolveBrowseDir(hostCtx, rawPath) {
+  const requested = String(rawPath || "").trim() || os.homedir();
+  const abs = path.resolve(requested);
+  let real;
+  try {
+    real = fs.realpathSync(abs);
+  } catch {
+    return null;
+  }
+  if (!fs.statSync(real).isDirectory()) return null;
+  const allowed = collectAllowedRoots(hostCtx).some((root) => real === root || real.startsWith(`${root}${path.sep}`));
+  if (!allowed) return null;
+  return real;
+}
+
+function serveBrowse(req, res) {
+  try {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    const url = requestUrl(req);
+    const dir = resolveBrowseDir(openFileHostCtx, url.searchParams.get("path"));
+    if (!dir) {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("目录不存在或无权浏览");
+      return;
+    }
+    const roots = collectAllowedRoots(openFileHostCtx);
+    const parent = path.dirname(dir);
+    const parentAllowed = roots.some((root) => parent === root || parent.startsWith(`${root}${path.sep}`));
+    const parentHref = parentAllowed && parent !== dir
+      ? `/api/dsh-gw-browse?path=${encodeURIComponent(parent)}`
+      : "";
+    let names = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      names = [];
+    }
+    const entries = names
+      .filter((name) => !SECRET_BASENAMES.has(name) && !name.endsWith(".pem"))
+      .slice(0, 400)
+      .map((name) => {
+        const abs = path.join(dir, name);
+        let isDir = false;
+        try {
+          isDir = fs.statSync(abs).isDirectory();
+        } catch {
+          return null;
+        }
+        if (isDir && BROWSE_SKIP_DIRS.has(name)) return null;
+        const href = isDir
+          ? `/api/dsh-gw-browse?path=${encodeURIComponent(abs)}`
+          : `/api/dsh-gw-file?path=${encodeURIComponent(abs)}`;
+        return { name, dir: isDir, href };
+      })
+      .filter(Boolean)
+      .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name, "zh"));
+    const html = fileBrowserPage(dir, parentHref, entries);
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-disposition": "inline",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    res.end(html);
+  } catch {
+    if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    if (!res.writableEnded) res.end("浏览目录失败");
+  }
 }
 
 function serveOpenFile(req, res) {
@@ -827,6 +907,11 @@ function startGateway(options) {
 
     if (pathname === "/api/dsh-gw-file") {
       serveOpenFile(req, res);
+      return;
+    }
+
+    if (pathname === "/api/dsh-gw-browse") {
+      serveBrowse(req, res);
       return;
     }
 

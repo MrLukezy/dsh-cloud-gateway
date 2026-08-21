@@ -252,3 +252,47 @@ export function markdownPreviewPage(name, source, rawHref) {
 </body>
 </html>`;
 }
+
+export function fileBrowserPage(current, parentHref, entries) {
+  const title = escapeHtml(current || "文件浏览");
+  const up = parentHref ? `<a href="${escapeHtml(parentHref)}">上级目录</a>` : "<span>已到允许的根目录</span>";
+  const rows = (entries || []).map((item) => {
+    const href = escapeHtml(item.href);
+    const name = escapeHtml(item.name);
+    const kind = item.dir ? "目录" : "文件";
+    return `<a class="row" href="${href}"><span class="kind">${kind}</span><span class="name">${name}</span></a>`;
+  }).join("");
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${title}</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f6f1e8; --card:#fffdf8; --text:#1c2430; --muted:#667085; --line:#d9d1c3; --accent:#8a5a12; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#10141c; --card:#171d28; --text:#e8eef8; --muted:#93a0b8; --line:#2b3344; --accent:#e2b56a; }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body { font: 16px/1.55 "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color: var(--text); background: var(--bg); }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 20px 16px 72px; }
+    .bar { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 14px; color: var(--muted); font-size: 13px; word-break: break-all; }
+    .bar a { color: var(--accent); }
+    .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+    .list { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+    .row { display: flex; gap: 12px; align-items: center; padding: 12px 14px; color: inherit; text-decoration: none; border-top: 1px solid var(--line); }
+    .row:first-child { border-top: 0; }
+    .kind { flex: none; color: var(--muted); font-size: 12px; width: 36px; }
+    .name { min-width: 0; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="bar"><span>${title}</span>${up}</div>
+    <p class="hint">这是网关提供的文件浏览。点目录进入，点文件预览。官方竖屏插件的文件夹按钮本身没有接资源管理器。</p>
+    <div class="list">${rows || '<div class="row"><span class="name">这个目录是空的</span></div>'}</div>
+  </div>
+</body>
+</html>`;
+}
