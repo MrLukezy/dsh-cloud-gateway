@@ -331,6 +331,20 @@ window.__ModuleLoader__.load({
           { name: "conversation.input.left", id: "dsh-gw-doc-drop", order: 80 },
           (props) => react.createElement(Capture, props),
         ));
+
+        if (typeof ctx.inject === "function") {
+          ctx.inject(["workspaces"], (inner) => {
+            const ws = inner.workspaces || inner.get?.("workspaces");
+            if (ws && typeof ws.archiveSession === "function") {
+              window.__dshGwArchiveSession = (sessionId) => ws.archiveSession(sessionId);
+            }
+          });
+        } else {
+          const ws = ctx.workspaces || ctx.get?.("workspaces");
+          if (ws && typeof ws.archiveSession === "function") {
+            window.__dshGwArchiveSession = (sessionId) => ws.archiveSession(sessionId);
+          }
+        }
       },
     };
 

@@ -8,7 +8,7 @@ import { loginPage, settingsPage, settingsHookHtml } from "./pages.js";
 import { markdownPreviewPage, fileBrowserPage } from "./markdown.js";
 
 export const name = "dsh-cloud-gateway";
-export const inject = ["webStartup"];
+export const inject = ["webStartup", "workspaceRegistry"];
 
 const COOKIE = "dsh_gw";
 const MAX_AGE = 7 * 24 * 3600;
@@ -28,6 +28,7 @@ const HOP_BY_HOP = new Set([
 ]);
 const STATE_FILE = "cloud-gateway-state.json";
 const UUID_POLYFILL = `<script>(function(){try{var c=globalThis.crypto;if(!c||typeof c.randomUUID==="function")return;if(typeof c.getRandomValues!=="function")return;c.randomUUID=function(){var b=new Uint8Array(16);c.getRandomValues(b);b[6]=b[6]&15|64;b[8]=b[8]&63|128;var h=[];for(var j=0;j<16;j++)h.push((b[j]>>4).toString(16)+(b[j]&15).toString(16));return h[0]+h[1]+h[2]+h[3]+"-"+h[4]+h[5]+"-"+h[6]+h[7]+"-"+h[8]+h[9]+"-"+h[10]+h[11]+h[12]+h[13]+h[14]+h[15]};}catch(e){}})();</script>`;
+const THEME_BOOT_SCRIPT = `<script>(function(){try{var t=localStorage.getItem("dsh-gw-theme")||"";var a=localStorage.getItem("dsh-gw-adapt")||"auto";var h=document.documentElement;if(t)h.setAttribute("data-dsh-gw-theme",t);h.setAttribute("data-dsh-gw-adapt",a||"auto");if(t==="light"){h.setAttribute("data-dsh-gw-light","1");h.style.colorScheme="light";}if(t==="dark"||t==="cyberpunk"){h.setAttribute("data-dsh-gw-light","0");h.style.colorScheme="dark";}if(a!=="mobile"&&a!=="web")return;var raw=window.matchMedia.bind(window);var width=a==="mobile"?390:1280;window.matchMedia=function(q){var m=raw(q);var max=/max-width:\\s*(\\d+)px/i.exec(String(q||""));var min=/min-width:\\s*(\\d+)px/i.exec(String(q||""));if(!max&&!min)return m;var ok=true;if(max&&width>Number(max[1]))ok=false;if(min&&width<Number(min[1]))ok=false;return{matches:ok,media:q,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false;}};};}catch(e){}})();</script>`;
 
 export const Config = Schema.object({
   listenHost: Schema.string().default("0.0.0.0").description("公网监听地址。云服务器用 0.0.0.0，本机调试可用 127.0.0.1"),
@@ -314,6 +315,232 @@ function collectAllowedRoots(hostCtx) {
   return [...new Set(roots)];
 }
 
+const SESSION_ID_RE = /^session-[A-Za-z0-9._-]+$/;
+
+function sessionsRoot() {
+  return path.join(dshHome(), "sessions");
+}
+
+export function findSessionDir(sessionId) {
+  if (!SESSION_ID_RE.test(sessionId)) return null;
+  const root = path.resolve(sessionsRoot());
+  if (!fs.existsSync(root)) return null;
+  let names = [];
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return null;
+  }
+  for (const project of names) {
+    if (project === "." || project === "..") continue;
+    const dir = path.resolve(root, project, sessionId);
+    if (dir !== root && !dir.startsWith(`${root}${path.sep}`)) continue;
+    try {
+      if (fs.statSync(dir).isDirectory()) return dir;
+    } catch {
+      // skip
+    }
+  }
+  return null;
+}
+
+export function pruneWorkspaceFile(sessionId) {
+  if (!SESSION_ID_RE.test(sessionId)) return false;
+  const file = path.join(dshHome(), "storages", "workspace.json");
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return false;
+  }
+  let changed = false;
+  const global = data.global || {};
+  if (Array.isArray(global.archivedSessionIds) && global.archivedSessionIds.includes(sessionId)) {
+    global.archivedSessionIds = global.archivedSessionIds.filter((id) => id !== sessionId);
+    data.global = global;
+    changed = true;
+  }
+  const table = data.tables?.workspaces || {};
+  for (const rec of Object.values(table)) {
+    if (Array.isArray(rec.sessionIds) && rec.sessionIds.includes(sessionId)) {
+      rec.sessionIds = rec.sessionIds.filter((id) => id !== sessionId);
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+  return true;
+}
+
+async function forgetSessionInRegistry(hostCtx, sessionId) {
+  const registry = hostCtx?.get?.("workspaceRegistry") || hostCtx?.workspaceRegistry;
+  if (!registry) return false;
+  let touched = false;
+  if (typeof registry.archiveSession === "function") {
+    try {
+      await registry.archiveSession(sessionId);
+      touched = true;
+    } catch {
+      // already gone or unknown
+    }
+  }
+  try {
+    for (const ws of registry.list?.() || []) {
+      if (typeof ws.detachSession !== "function") continue;
+      try {
+        await ws.detachSession(sessionId);
+        touched = true;
+      } catch {
+        // keep going
+      }
+    }
+  } catch {
+    // registry optional
+  }
+  return touched;
+}
+
+export async function deleteStoredSession(hostCtx, rawId) {
+  const sessionId = String(rawId || "").trim();
+  if (!SESSION_ID_RE.test(sessionId)) return { ok: false, reason: "invalid" };
+  const dir = findSessionDir(sessionId);
+  const registryTouched = await forgetSessionInRegistry(hostCtx, sessionId);
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  const pruned = registryTouched ? false : pruneWorkspaceFile(sessionId);
+  if (!dir && !registryTouched && !pruned) return { ok: false, reason: "not_found", sessionId };
+  return { ok: true, sessionId };
+}
+
+function jsonReply(res, status, body) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(body));
+}
+
+async function serveDeleteSession(req, res) {
+  if (req.method !== "POST") {
+    res.writeHead(405);
+    res.end();
+    return;
+  }
+  try {
+    const body = JSON.parse(await parseBody(req) || "{}");
+    const result = await deleteStoredSession(openFileHostCtx, body.sessionId);
+    const status = result.ok ? 200 : result.reason === "invalid" ? 400 : 404;
+    jsonReply(res, status, result);
+  } catch {
+    jsonReply(res, 400, { ok: false, reason: "bad_request" });
+  }
+}
+
+const THEME_VALUES = new Set(["light", "dark", "system", "cyberpunk"]);
+const ADAPT_VALUES = new Set(["auto", "mobile", "web"]);
+const THEME_BG_LIMIT = 6 * 1024 * 1024;
+
+function themeBgFile() {
+  return path.join(dshHome(), "theme-background");
+}
+
+function sniffImageType(bytes) {
+  if (!bytes?.length) return "";
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) return "image/png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
+  if (bytes[0] === 0x47 && bytes[1] === 0x49) return "image/gif";
+  if (bytes[0] === 0x52 && bytes.toString("ascii", 0, 4) === "RIFF") return "image/webp";
+  return "";
+}
+
+export function readThemeSettings() {
+  const visual = readState().userSettings || {};
+  const theme = THEME_VALUES.has(visual.theme) ? visual.theme : "system";
+  const adapt = ADAPT_VALUES.has(visual.adapt) ? visual.adapt : "auto";
+  let background = "";
+  try {
+    if (fs.existsSync(themeBgFile()) && fs.statSync(themeBgFile()).isFile()) {
+      background = `/api/dsh-gw-theme-bg?t=${fs.statSync(themeBgFile()).mtimeMs | 0}`;
+    }
+  } catch {
+    background = "";
+  }
+  return { theme, adapt, background };
+}
+
+export function writeThemeSettings(patch = {}) {
+  const state = readState();
+  const userSettings = { ...(state.userSettings || {}) };
+  if (THEME_VALUES.has(patch.theme)) userSettings.theme = patch.theme;
+  if (ADAPT_VALUES.has(patch.adapt)) userSettings.adapt = patch.adapt;
+  writeState({ ...state, userSettings });
+  return readThemeSettings();
+}
+
+function serveThemeSettings(req, res) {
+  if (req.method === "GET" || req.method === "HEAD") {
+    jsonReply(res, 200, readThemeSettings());
+    return;
+  }
+  if (req.method !== "POST") {
+    res.writeHead(405);
+    res.end();
+    return;
+  }
+  parseBody(req).then((raw) => {
+    const body = JSON.parse(raw || "{}");
+    jsonReply(res, 200, writeThemeSettings(body));
+  }).catch(() => {
+    jsonReply(res, 400, { ok: false, reason: "bad_request" });
+  });
+}
+
+function serveThemeBackground(req, res) {
+  if (req.method === "GET" || req.method === "HEAD") {
+    const file = themeBgFile();
+    if (!fs.existsSync(file)) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const bytes = fs.readFileSync(file);
+    const type = readState().userSettings?.backgroundType || sniffImageType(bytes) || "image/jpeg";
+    res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+    if (req.method === "HEAD") res.end();
+    else res.end(bytes);
+    return;
+  }
+  if (req.method === "DELETE") {
+    try {
+      fs.unlinkSync(themeBgFile());
+    } catch {
+      // already gone
+    }
+    const state = readState();
+    const userSettings = { ...(state.userSettings || {}) };
+    delete userSettings.backgroundType;
+    writeState({ ...state, userSettings });
+    jsonReply(res, 200, readThemeSettings());
+    return;
+  }
+  if (req.method !== "POST") {
+    res.writeHead(405);
+    res.end();
+    return;
+  }
+  parseBody(req, THEME_BG_LIMIT).then((raw) => {
+    const payload = JSON.parse(raw || "{}");
+    const bytes = Buffer.from(String(payload.base64 || ""), "base64");
+    const type = sniffImageType(bytes);
+    if (!type) throw new Error("只支持 png / jpg / webp / gif");
+    fs.writeFileSync(themeBgFile(), bytes);
+    const state = readState();
+    writeState({
+      ...state,
+      userSettings: { ...(state.userSettings || {}), backgroundType: type },
+    });
+    jsonReply(res, 200, readThemeSettings());
+  }).catch((error) => {
+    jsonReply(res, 400, { ok: false, error: error instanceof Error ? error.message : "上传失败" });
+  });
+}
+
 export function resolveOpenFile(hostCtx, rawPath, token) {
   const dir = uploadDir();
   if (token) {
@@ -513,6 +740,9 @@ function shouldInjectHtml(pathname, contentType) {
   if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return false;
   if (pathOnly === "/query-balance" || pathOnly.startsWith("/query-balance/")) return false;
   if (pathOnly === "/dsh-image-gen" || pathOnly.startsWith("/dsh-image-gen/")) return false;
+  if (pathOnly === "/dsh-free-vision" || pathOnly.startsWith("/dsh-free-vision/")) return false;
+  if (pathOnly === "/plugin-switch" || pathOnly.startsWith("/plugin-switch/")) return false;
+  if (pathOnly === "/dsh-market" || pathOnly.startsWith("/dsh-market/")) return false;
   return true;
 }
 
@@ -662,7 +892,7 @@ function startGateway(options) {
 
   function injectHtml(body) {
     if (body.includes("<head>") && !body.includes("c.randomUUID=function")) {
-      body = body.replace("<head>", `<head>${UUID_POLYFILL}`);
+      body = body.replace("<head>", `<head>${UUID_POLYFILL}${THEME_BOOT_SCRIPT}`);
     }
     if (!body.includes('id="dsh-gw-hook"')) {
       const hook = settingsHookHtml(settingsPath, logoutPath);
@@ -915,6 +1145,21 @@ function startGateway(options) {
       return;
     }
 
+    if (pathname === "/api/dsh-gw-session-delete") {
+      await serveDeleteSession(req, res);
+      return;
+    }
+
+    if (pathname === "/api/dsh-gw-theme") {
+      serveThemeSettings(req, res);
+      return;
+    }
+
+    if (pathname === "/api/dsh-gw-theme-bg") {
+      serveThemeBackground(req, res);
+      return;
+    }
+
     proxyWeb(req, res);
   });
 
@@ -1115,6 +1360,18 @@ export function apply(ctx, config = {}) {
 
   openFileHostCtx = ctx;
   if (typeof ctx.inject === "function") {
+    ctx.inject(["workspaceRegistry"], (regCtx) => {
+      openFileHostCtx = {
+        get(name) {
+          if (name === "workspaceRegistry") {
+            return regCtx.workspaceRegistry || regCtx.get?.("workspaceRegistry") || ctx.workspaceRegistry || ctx.get?.("workspaceRegistry");
+          }
+          return ctx.get?.(name) ?? regCtx.get?.(name);
+        },
+        workspaceRegistry: regCtx.workspaceRegistry || regCtx.get?.("workspaceRegistry") || ctx.workspaceRegistry,
+        sessions: ctx.sessions || ctx.get?.("sessions"),
+      };
+    });
     ctx.inject(["webServer"], (webCtx) => {
       registerUploadRoute(webCtx);
       registerFileOpenRoute(webCtx, ctx);
